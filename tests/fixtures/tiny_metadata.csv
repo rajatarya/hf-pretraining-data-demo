@@ -1,0 +1,6 @@
+asset_preview,asset_name,relative_path,classification,label,q_code,mass,thumbnail_path
+https://example.com/a.png,sm_book_a,Props/HM/book/sm_book_a.usd,Prop general hand manipulation,book,Q571,0.4,renders/sm_book_a.png
+https://example.com/b.png,sm_mug_a,Props/HM/mug/sm_mug_a.usd,Prop general hand manipulation,mug,Q1057697,0.3,renders/sm_mug_a.png
+https://example.com/c.png,sm_crate_a,Assembly/crate/sm_crate_a.usd,Assembly,crate,Q605384,15.0,renders/sm_crate_a.png
+https://example.com/d.png,sm_brush_a,Props/HM/brush/sm_brush_a.usd,Prop general hand manipulation,paintbrush,Q1402267,0.05,renders/sm_brush_a.png
+https://example.com/e.png,sm_warehouse_a,Scenario/warehouse/sm_warehouse_a.usd,Scenario,warehouse,Q196426,,renders/sm_warehouse_a.png

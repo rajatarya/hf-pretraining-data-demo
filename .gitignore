@@ -1,0 +1,27 @@
+# General
+*.pdf
+/tmp/
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# uv
+.uv/
+
+# Editor / shell
+*.swp
+*.swo
+*~
