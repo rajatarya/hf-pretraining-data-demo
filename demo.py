@@ -453,4 +453,11 @@ def mutate_csv_add_grasp_score(src_csv: str, dst_csv: str) -> None:
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except HFCliError as e:
+        Console(stderr=True).print(f"[red]error:[/red] {e}")
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        Console(stderr=True).print("[yellow]interrupted[/yellow]")
+        raise SystemExit(130)
