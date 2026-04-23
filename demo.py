@@ -36,13 +36,25 @@ DEFAULT_DATASET_ID = "nvidia/PhysicalAI-SimReady-Warehouse-01"
 DATASET_CSV = "physical_ai_simready_warehouse_01.csv"
 
 
+# ─── Types ────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class HFIdentity:
+    """HF user + org membership."""
+    user: str
+    orgs: tuple[str, ...]
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> int:
     """Run the 7-phase NVIDIA Buckets + Jobs demo."""
     p = argparse.ArgumentParser(description="HF Buckets + hf-mount + HF Jobs demo")
+    p.add_argument("--namespace", default=None,
+                   help="HF namespace for the Job + default bucket (default: your sole org if "
+                        "you have exactly one, else your username; required when you have 2+ orgs)")
     p.add_argument("--bucket", default=None,
-                   help="bucket name (default: <user>/nvidia-simready)")
+                   help="bucket name (default: <namespace>/nvidia-simready)")
     p.add_argument("--dataset", default=DEFAULT_DATASET_ID,
                    help=f"dataset repo id, e.g. 'org/name' (default: {DEFAULT_DATASET_ID})")
     p.add_argument("--poll-interval", type=float, default=3.0)
@@ -70,9 +82,15 @@ def main() -> int:
 
     # Phase 1: preflight
     console.rule("[bold]Phase 1 — preflight")
-    user = hf_whoami()
-    bucket = args.bucket or f"{user}/nvidia-simready"
-    console.print(f"user:   {user}\nbucket: {bucket}")
+    identity = hf_whoami_info()
+    namespace = resolve_namespace(identity, args.namespace)
+    bucket = args.bucket or f"{namespace}/nvidia-simready"
+    console.print(
+        f"user:      {identity.user}\n"
+        f"orgs:      {', '.join(identity.orgs) if identity.orgs else '(none)'}\n"
+        f"namespace: {namespace}\n"
+        f"bucket:    {bucket}"
+    )
 
     # Phase 2: ensure bucket
     console.rule("[bold]Phase 2 — ensure bucket")
@@ -95,8 +113,8 @@ def main() -> int:
     if not args.skip_job:
         console.rule("[bold]Phase 4 — submit Job")
         script_path = str(Path(__file__).parent / "job" / "analytics.py")
-        job_id = submit_job(script_path, bucket, flavor=args.flavor)
-        job_url = build_job_url(user, job_id)
+        job_id = submit_job(script_path, bucket, flavor=args.flavor, namespace=namespace)
+        job_url = build_job_url(namespace, job_id)
         console.print(Panel(
             f"job_id: {job_id}\nurl:    {job_url}",
             title="Job submitted — open in browser if you like",
@@ -180,28 +198,59 @@ class HFCliError(RuntimeError):
     """Raised when an `hf` CLI subprocess exits non-zero."""
 
 
-def hf_whoami() -> str:
-    """Return the authenticated HF username. Raises HFCliError if not logged in."""
+def hf_whoami_info() -> HFIdentity:
+    """Return the authenticated HF user + orgs. Raises HFCliError if not logged in."""
     r = subprocess.run(
         ["hf", "auth", "whoami"], capture_output=True, text=True, check=False
     )
     if r.returncode != 0:
         raise HFCliError(f"hf auth whoami failed: {r.stderr.strip()}")
-    # Output format varies by TTY:
-    #   non-TTY: "user=<name> orgs=<list>"
-    #   TTY:     "✓ Logged in\n  user: <name>\n  orgs: <list>"
-    # Strip ANSI escape sequences, then accept both "user=" and "user:" forms.
+    # Output varies by TTY:
+    #   non-TTY: "user=<name> orgs=<csv>"
+    #   TTY:     "✓ Logged in\n  user: <name>\n  orgs: <csv>"
     ansi_re = re.compile(r"\x1b\[[0-9;]*m")
     clean = ansi_re.sub("", r.stdout)
+    user: str | None = None
+    orgs_csv: str = ""
     for line in clean.splitlines():
         line = line.strip()
         for sep in ("=", ":"):
             if line.startswith(f"user{sep}"):
-                return line.split(sep, 1)[1].strip().split()[0]
+                user = line.split(sep, 1)[1].strip().split()[0]
+            if line.startswith(f"orgs{sep}"):
+                orgs_csv = line.split(sep, 1)[1].strip()
+        # non-TTY form: "user=foo orgs=bar,baz" — parse both tokens on one line
         for token in line.split():
-            if token.startswith("user="):
-                return token.split("=", 1)[1]
-    raise HFCliError(f"hf auth whoami output not understood: {r.stdout!r}")
+            if token.startswith("user=") and user is None:
+                user = token.split("=", 1)[1]
+            if token.startswith("orgs="):
+                orgs_csv = token.split("=", 1)[1]
+    if user is None:
+        raise HFCliError(f"hf auth whoami output not understood: {r.stdout!r}")
+    orgs = tuple(o.strip() for o in orgs_csv.split(",") if o.strip()) if orgs_csv else ()
+    return HFIdentity(user=user, orgs=orgs)
+
+
+def hf_whoami() -> str:
+    """Return the authenticated HF username (no orgs)."""
+    return hf_whoami_info().user
+
+
+def resolve_namespace(identity: HFIdentity, explicit: str | None) -> str:
+    """Pick the HF namespace for Jobs + bucket. Explicit flag wins. Otherwise
+    use the sole org if the user has exactly one; fall back to the username
+    with zero orgs; error with 2+ orgs to force the user to disambiguate."""
+    if explicit:
+        return explicit
+    if len(identity.orgs) == 0:
+        return identity.user
+    if len(identity.orgs) == 1:
+        return identity.orgs[0]
+    orgs_list = ", ".join(identity.orgs)
+    raise HFCliError(
+        f"User '{identity.user}' belongs to {len(identity.orgs)} orgs ({orgs_list}). "
+        f"Pass --namespace <name> to pick one (or --namespace {identity.user} for your personal namespace)."
+    )
 
 
 def get_dataset_total_bytes(dataset_id: str) -> int:
@@ -235,17 +284,21 @@ def run_hf_cp_capture(src: str, dst: str) -> tuple[int, int, str]:
     return elapsed_ms, parse_new_data_bytes(stderr_text), stderr_text
 
 
-def submit_job(script_path: str, bucket: str, flavor: str = "cpu-basic") -> str:
+def submit_job(
+    script_path: str,
+    bucket: str,
+    flavor: str = "cpu-basic",
+    namespace: str | None = None,
+) -> str:
     """Submit `script_path` to HF Jobs via `hf jobs uv run --detach`. Returns job_id."""
-    r = subprocess.run(
-        [
-            "hf", "jobs", "uv", "run", "--detach",
-            "--flavor", flavor,
-            "-v", f"hf://buckets/{bucket}:/workspace",
-            script_path, "/workspace",
-        ],
-        capture_output=True, text=True, check=False,
-    )
+    cmd = ["hf", "jobs", "uv", "run", "--detach", "--flavor", flavor]
+    if namespace:
+        cmd.extend(["--namespace", namespace])
+    cmd.extend([
+        "-v", f"hf://buckets/{bucket}:/workspace",
+        script_path, "/workspace",
+    ])
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if r.returncode != 0:
         raise HFCliError(f"hf jobs uv run failed: {r.stderr.strip()}")
     # hf jobs uv run --detach prints:

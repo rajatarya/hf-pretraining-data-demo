@@ -247,3 +247,62 @@ def test_get_dataset_total_bytes_sums_siblings(monkeypatch):
     import huggingface_hub
     monkeypatch.setattr(huggingface_hub, "HfApi", lambda: FakeApi())
     assert demo.get_dataset_total_bytes("some/dataset") == 350  # None → 0
+
+
+def test_hf_whoami_info_parses_user_and_orgs_nontty(monkeypatch):
+    class FakeProc:
+        returncode = 0
+        stdout = "user=rajatarya orgs=huggingface,xet-team\n"
+        stderr = ""
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeProc())
+    info = demo.hf_whoami_info()
+    assert info.user == "rajatarya"
+    assert info.orgs == ("huggingface", "xet-team")
+
+
+def test_hf_whoami_info_parses_user_and_orgs_tty(monkeypatch):
+    class FakeProc:
+        returncode = 0
+        stdout = "\x1b[32m✓ Logged in\x1b[0m\n  user: rajatarya\n  orgs: huggingface,xet-team\n"
+        stderr = ""
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeProc())
+    info = demo.hf_whoami_info()
+    assert info.user == "rajatarya"
+    assert info.orgs == ("huggingface", "xet-team")
+
+
+def test_hf_whoami_info_no_orgs(monkeypatch):
+    class FakeProc:
+        returncode = 0
+        stdout = "user=solo_user\n"
+        stderr = ""
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeProc())
+    info = demo.hf_whoami_info()
+    assert info.user == "solo_user"
+    assert info.orgs == ()
+
+
+def test_resolve_namespace_explicit_wins():
+    ident = demo.HFIdentity(user="u", orgs=("a", "b", "c"))
+    assert demo.resolve_namespace(ident, "myorg") == "myorg"
+
+
+def test_resolve_namespace_single_org_used_as_default():
+    ident = demo.HFIdentity(user="u", orgs=("myorg",))
+    assert demo.resolve_namespace(ident, None) == "myorg"
+
+
+def test_resolve_namespace_no_orgs_falls_back_to_user():
+    ident = demo.HFIdentity(user="u", orgs=())
+    assert demo.resolve_namespace(ident, None) == "u"
+
+
+def test_resolve_namespace_multi_orgs_raises(monkeypatch):
+    import pytest
+    ident = demo.HFIdentity(user="u", orgs=("a", "b"))
+    with pytest.raises(demo.HFCliError) as exc:
+        demo.resolve_namespace(ident, None)
+    msg = str(exc.value)
+    assert "2 orgs" in msg
+    assert "a" in msg and "b" in msg
+    assert "--namespace" in msg
