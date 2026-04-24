@@ -15,6 +15,7 @@ import json
 import os
 from fnmatch import fnmatch
 from pathlib import Path
+import time
 
 import polars as pl
 
@@ -134,6 +135,9 @@ def main(workspace: str) -> int:
     print(f"wrote {out}/summary.json")
     print(f"wrote {out}/assets_by_category.parquet ({joined.height} rows)")
     print(f"wrote {out}/training_manifest.parquet ({curated.height} rows)")
+
+    # give mount a couple seconds to sync written files.
+    time.sleep(2)
     return 0
 
 
