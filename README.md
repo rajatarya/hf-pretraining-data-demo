@@ -31,8 +31,8 @@ hf auth login                                      # or export HF_TOKEN=hf_...
 ## Flags
 
 ```bash
-uv run demo.py --namespace <org>      # HF namespace for the Job + default bucket (default: your sole org, or username)
-uv run demo.py --bucket <ns>/<name>   # override bucket (default: <namespace>/nvidia-simready)
+uv run demo.py --namespace <org>      # HF namespace for the Job only (default: your sole org, or username)
+uv run demo.py --bucket <ns>/<name>   # override bucket (default: <user>/nvidia-simready, always personal)
 uv run demo.py --dataset <org>/<ds>   # override dataset (default: nvidia/PhysicalAI-SimReady-Warehouse-01)
 uv run demo.py --skip-ingest          # dataset already in bucket
 uv run demo.py --skip-job             # skip the analytics Job

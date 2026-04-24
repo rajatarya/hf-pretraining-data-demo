@@ -51,8 +51,9 @@ def main() -> int:
     """Run the 7-phase NVIDIA Buckets + Jobs demo."""
     p = argparse.ArgumentParser(description="HF Buckets + hf-mount + HF Jobs demo")
     p.add_argument("--namespace", default=None,
-                   help="HF namespace for the Job + default bucket (default: your sole org if "
-                        "you have exactly one, else your username; required when you have 2+ orgs)")
+                   help="HF namespace to submit the Job under (default: your sole org if you "
+                        "have exactly one, else your username; required when you have 2+ orgs). "
+                        "Does not affect the bucket — the bucket is always in your personal namespace.")
     p.add_argument("--bucket", default=None,
                    help="bucket name (default: <namespace>/nvidia-simready)")
     p.add_argument("--dataset", default=DEFAULT_DATASET_ID,
@@ -84,12 +85,12 @@ def main() -> int:
     console.rule("[bold]Phase 1 — preflight")
     identity = hf_whoami_info()
     namespace = resolve_namespace(identity, args.namespace)
-    bucket = args.bucket or f"{namespace}/nvidia-simready"
+    bucket = args.bucket or f"{identity.user}/nvidia-simready"
     console.print(
-        f"user:      {identity.user}\n"
-        f"orgs:      {', '.join(identity.orgs) if identity.orgs else '(none)'}\n"
-        f"namespace: {namespace}\n"
-        f"bucket:    {bucket}"
+        f"user:          {identity.user}\n"
+        f"orgs:          {', '.join(identity.orgs) if identity.orgs else '(none)'}\n"
+        f"job namespace: {namespace}\n"
+        f"bucket:        {bucket}"
     )
 
     # Phase 2: ensure bucket
@@ -122,12 +123,15 @@ def main() -> int:
         ))
 
         console.rule(f"[bold]Phase 5 — poll (every {args.poll_interval:.0f}s)")
-        result = poll_job(job_id, args.poll_interval, args.job_timeout, inspect_job_status)
+        result = poll_job(
+            job_id, args.poll_interval, args.job_timeout,
+            lambda jid: inspect_job_status(jid, namespace=namespace),
+        )
         console.print(f"job finished: status={result.status} elapsed={result.elapsed_s:.1f}s")
         if result.status != "succeeded":
             console.print(f"[red]Job did not succeed. URL: {job_url}[/red]")
             if result.status == "failed":
-                subprocess.run(["hf", "jobs", "logs", job_id])
+                subprocess.run(["hf", "jobs", "logs", "--namespace", namespace, job_id])
                 return 2
             if result.status == "timeout":
                 return 3
@@ -311,13 +315,16 @@ def submit_job(
     raise HFCliError(f"hf jobs uv run did not print a job_id. stdout={r.stdout!r}")
 
 
-def inspect_job_status(job_id: str) -> str:
+def inspect_job_status(job_id: str, namespace: str | None = None) -> str:
     """Return the Job's status in canonical form ('pending'|'running'|'succeeded'|'failed'|'cancelled').
-    Maps HF CLI's stage vocabulary to poll_job's expected vocabulary."""
-    r = subprocess.run(
-        ["hf", "jobs", "inspect", job_id],
-        capture_output=True, text=True, check=False,
-    )
+
+    Maps HF CLI's stage vocabulary to poll_job's expected vocabulary. `namespace`
+    must match the namespace the job was submitted under; otherwise the CLI
+    defaults to the caller's personal namespace and 404s on org-owned jobs."""
+    cmd = ["hf", "jobs", "inspect", job_id]
+    if namespace:
+        cmd.extend(["--namespace", namespace])
+    r = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if r.returncode != 0:
         raise HFCliError(f"hf jobs inspect failed: {r.stderr.strip()}")
     data = json.loads(r.stdout)
